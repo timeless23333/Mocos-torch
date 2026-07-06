@@ -4,8 +4,6 @@ This file documents the PyTorch reimplementation entry point, `MoCos_torch.py`.
 It is intended for users who do not want to install the original TensorFlow 1.x
 environment.
 
-The original paper README is still `README.md`. The original TensorFlow script
-is still `MoCos.py`.
 
 ## What Changed
 
@@ -215,8 +213,5 @@ the original code more closely.
 
 ## Notes
 
-- `requirements.txt` is the original old TensorFlow environment file.
 - `requirements-torch.txt` is for the PyTorch entry point.
-- Use `MoCos.py` only when you need the original TensorFlow implementation or
-  the author's `.ckpt` checkpoints.
 - Use `MoCos_torch.py` for new training in a modern PyTorch environment.
