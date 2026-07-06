@@ -50,7 +50,7 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 Install the remaining dependencies:
 
 ```bash
-pip install -r requirements-torch.txt
+pip install -r requirements.txt
 ```
 
 Verify the script starts:
