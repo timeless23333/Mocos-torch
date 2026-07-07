@@ -128,8 +128,17 @@ python MoCos_torch.py --dataset CASIA_B --probe_type nm.nm --length 40 --epochs 
 improve for `--patience` epochs.
 
 You can interrupt training with `Ctrl+C`. The current script saves only the best
-model when `--save_model 1` is enabled and Rank-1 improves. It does not yet save
-full resumable optimizer checkpoints.
+model when `--save_model 1` is enabled and Rank-1 improves. It also writes a
+`last.pt` checkpoint in the same directory after each epoch, including optimizer
+state, epoch, best metrics, and the early-stopping patience counter.
+
+Resume an interrupted run with matching hyperparameters:
+
+```bash
+python MoCos_torch.py --dataset KS20 --probe probe --length 6 --epochs 1000 --patience 80 --save_model 1 --resume auto
+```
+
+You can also pass a specific checkpoint path to `--resume`.
 
 ## Evaluation
 
@@ -192,6 +201,9 @@ Common arguments:
 --patience         early stopping patience
 --save_model       set to 1 to save the best PyTorch checkpoint
 --device           cpu, cuda:0, cuda:1, etc.
+--seed             optional random seed for Python, NumPy, and PyTorch
+--deterministic    set to 1 to request deterministic PyTorch behavior
+--resume           checkpoint path, or auto for the generated last.pt path
 ```
 
 Model arguments:

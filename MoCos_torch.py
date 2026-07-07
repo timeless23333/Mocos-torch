@@ -3,6 +3,7 @@ import collections
 import copy
 import gc
 import os
+import random
 
 import numpy as np
 import torch
@@ -30,49 +31,79 @@ def parse_args():
 	parser.add_argument("--H", default=128, type=int)
 	parser.add_argument("--n_heads", default=8, type=int)
 	parser.add_argument("--L_transformer", default=2, type=int)
-	parser.add_argument("--fusion_lambda", default=0.5, type=float)
+	parser.add_argument("--fusion_lambda", default=None, type=float)
 	parser.add_argument("--t_1", default=0.1, type=float)
 	parser.add_argument("--t_2", default=10.0, type=float)
 	parser.add_argument("--pos_enc", default="1")
 	parser.add_argument("--enc_k", default=10, type=int)
-	parser.add_argument("--rand_flip", default="1")
-	parser.add_argument("--prob_t", default=0.0, type=float)
-	parser.add_argument("--prob_s", default=0.5, type=float)
+	parser.add_argument("--rand_flip", default=None)
+	parser.add_argument("--prob_t", default=None, type=float)
+	parser.add_argument("--prob_s", default=None, type=float)
 	parser.add_argument("--device", default="", help="Override device, e.g. cpu or cuda:0")
+	parser.add_argument("--seed", default=None, type=int, help="Set Python, NumPy, and PyTorch RNG seeds.")
+	parser.add_argument("--deterministic", default="0", help="Use deterministic CuDNN/PyTorch behavior when possible.")
+	parser.add_argument("--resume", default="", help="Resume training from a checkpoint path, or use 'auto' for last.pt.")
 	return parser.parse_args()
 
 
 def apply_dataset_defaults(args):
 	if args.dataset == "CASIA_B":
 		args.length = "40"
-		args.rand_flip = "0"
-		args.fusion_lambda = 1.0
+		if args.rand_flip is None:
+			args.rand_flip = "0"
+		if args.fusion_lambda is None:
+			args.fusion_lambda = 1.0
 		if args.patience == 150:
 			args.patience = 100
 	elif args.dataset == "KGBD":
-		args.rand_flip = "0"
-		args.prob_s = 0.5
-		args.prob_t = 0.25
-		args.fusion_lambda = 0.9
-	elif args.dataset == "IAS":
-		args.rand_flip = "0"
-		if args.probe == "A":
+		if args.rand_flip is None:
+			args.rand_flip = "0"
+		if args.prob_s is None:
 			args.prob_s = 0.5
-			args.prob_t = 0.1
-			args.fusion_lambda = 0.75
-		elif args.probe == "B":
-			args.prob_s = 0.25
+		if args.prob_t is None:
 			args.prob_t = 0.25
-			args.fusion_lambda = 0.75
+		if args.fusion_lambda is None:
+			args.fusion_lambda = 0.9
+	elif args.dataset == "IAS":
+		if args.rand_flip is None:
+			args.rand_flip = "0"
+		if args.probe == "A":
+			if args.prob_s is None:
+				args.prob_s = 0.5
+			if args.prob_t is None:
+				args.prob_t = 0.1
+			if args.fusion_lambda is None:
+				args.fusion_lambda = 0.75
+		elif args.probe == "B":
+			if args.prob_s is None:
+				args.prob_s = 0.25
+			if args.prob_t is None:
+				args.prob_t = 0.25
+			if args.fusion_lambda is None:
+				args.fusion_lambda = 0.75
 	elif args.dataset == "BIWI":
 		if args.probe in ["Walking", "Still"]:
-			args.prob_s = 0.25
-			args.prob_t = 0.25
-			args.fusion_lambda = 0.9 if args.probe == "Walking" else 0.25
+			if args.prob_s is None:
+				args.prob_s = 0.25
+			if args.prob_t is None:
+				args.prob_t = 0.25
+			if args.fusion_lambda is None:
+				args.fusion_lambda = 0.9 if args.probe == "Walking" else 0.25
 	elif args.dataset == "KS20":
-		args.prob_s = 0.25
-		args.prob_t = 0.25
-		args.fusion_lambda = 0.9
+		if args.prob_s is None:
+			args.prob_s = 0.25
+		if args.prob_t is None:
+			args.prob_t = 0.25
+		if args.fusion_lambda is None:
+			args.fusion_lambda = 0.9
+	if args.rand_flip is None:
+		args.rand_flip = "1"
+	if args.prob_s is None:
+		args.prob_s = 0.5
+	if args.prob_t is None:
+		args.prob_t = 0.0
+	if args.fusion_lambda is None:
+		args.fusion_lambda = 0.5
 	return args
 
 
@@ -86,6 +117,23 @@ def nb_nodes_for(dataset):
 
 def onehot_to_index(labels):
 	return np.argmax(np.asarray(labels), axis=-1).astype(np.int64)
+
+
+def set_random_seed(seed, deterministic=False):
+	if seed is None:
+		return
+	random.seed(seed)
+	np.random.seed(seed)
+	torch.manual_seed(seed)
+	if torch.cuda.is_available():
+		torch.cuda.manual_seed_all(seed)
+	if deterministic:
+		torch.backends.cudnn.benchmark = False
+		torch.backends.cudnn.deterministic = True
+		try:
+			torch.use_deterministic_algorithms(True)
+		except Exception as exc:
+			print("warning: deterministic algorithms not fully enabled:", exc)
 
 
 def k_hop_adj(adj, k):
@@ -115,20 +163,52 @@ def build_motif_adjs(dataset, adj_joint):
 	adj2 = k_hop_adj(adj1, 2)
 	adj3 = k_hop_adj(adj1, 3)
 
-	if node_num == 25:
-		arms = [[4, 5, 6, 7, 21, 22], [8, 9, 10, 11, 23, 24]]
-		legs = [[12, 13, 14, 15], [16, 17, 18, 19]]
-	elif node_num == 14:
-		arms = [[2, 3, 4], [5, 6, 7]]
-		legs = [[8, 9, 10], [11, 12, 13]]
-	else:
-		arms = [[4, 5, 6, 7], [8, 9, 10, 11]]
-		legs = [[12, 13, 14, 15], [16, 17, 18, 19]]
+	if node_num == 20:
+		adj4 = np.zeros((20, 20), dtype=np.float32)
+		adj4[8, [9, 10, 11]] = 1
+		adj4[9, [8, 10, 11]] = 1
+		adj4[10, [9, 8, 11]] = 1
+		adj4[11, [9, 10, 8]] = 1
+		for i in [8, 9, 10, 11]:
+			for j in [4, 5, 6, 7, 16, 17, 18, 19, 12, 13, 14, 15]:
+				adj4[i, j] = 1
+		adj4[4, [5, 6, 7]] = 1
+		adj4[5, [4, 6, 7]] = 1
+		adj4[6, [5, 4, 7]] = 1
+		adj4[7, [5, 6, 4]] = 1
+		for i in [4, 5, 6, 7]:
+			for j in [8, 9, 10, 11, 16, 17, 18, 19, 12, 13, 14, 15]:
+				adj4[i, j] = 1
 
-	adj4 = clique_adj(node_num, arms)
-	adj5 = clique_adj(node_num, legs)
+		adj5 = np.zeros((20, 20), dtype=np.float32)
+		adj5[16, [17, 18, 19]] = 1
+		adj5[17, [16, 18, 19]] = 1
+		adj5[18, [16, 17, 19]] = 1
+		adj5[19, [16, 18, 17]] = 1
+		for i in [16, 17, 18, 19]:
+			for j in [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]:
+				adj5[i, j] = 1
+		adj5[12, [13, 14, 15]] = 1
+		adj5[13, [12, 14, 15]] = 1
+		adj5[14, [12, 13, 15]] = 1
+		adj5[15, [12, 13, 14]] = 1
+		for i in [12, 13, 14, 15]:
+			for j in [4, 5, 6, 7, 8, 9, 10, 11, 16, 17, 18, 19]:
+				adj5[i, j] = 1
+	else:
+		if node_num == 25:
+			arms = [[4, 5, 6, 7, 21, 22], [8, 9, 10, 11, 23, 24]]
+			legs = [[12, 13, 14, 15], [16, 17, 18, 19]]
+		elif node_num == 14:
+			arms = [[2, 3, 4], [5, 6, 7]]
+			legs = [[8, 9, 10], [11, 12, 13]]
+		else:
+			arms = [[4, 5, 6, 7], [8, 9, 10, 11]]
+			legs = [[12, 13, 14, 15], [16, 17, 18, 19]]
+		adj4 = clique_adj(node_num, arms)
+		adj5 = clique_adj(node_num, legs)
 	for adj in [adj1, adj2, adj3, adj4, adj5]:
-		np.fill_diagonal(adj, 1.0)
+		np.fill_diagonal(adj, 0.0)
 	return np.stack([adj1, adj2, adj3, adj4, adj5], axis=0).astype(np.float32)
 
 
@@ -143,7 +223,7 @@ class MGTLayer(nn.Module):
 		self.q_layers = nn.ModuleList([nn.Linear(hidden_size, self.head_dim, bias=False) for _ in range(num_heads)])
 		self.k_layers = nn.ModuleList([nn.Linear(hidden_size, self.head_dim, bias=False) for _ in range(num_heads)])
 		self.v_layers = nn.ModuleList([nn.Linear(hidden_size, self.head_dim, bias=False) for _ in range(num_heads)])
-		self.register_buffer("motif_adjs", torch.from_numpy(motif_adjs))
+		self.register_buffer("motif_adjs", torch.from_numpy(motif_adjs), persistent=False)
 
 	def forward(self, x):
 		heads = []
@@ -360,12 +440,60 @@ def checkpoint_path(args):
 	return os.path.join("ReID_Models", args.dataset, args.probe, change, name)
 
 
+def last_checkpoint_path(args):
+	best_path = checkpoint_path(args)
+	name = "%s_last.pt" % args.probe_type if args.dataset == "CASIA_B" and args.probe_type else "last.pt"
+	return os.path.join(os.path.dirname(best_path), name)
+
+
+def load_torch_checkpoint(path, device):
+	try:
+		return torch.load(path, map_location=device, weights_only=False)
+	except TypeError:
+		return torch.load(path, map_location=device)
+
+
+def checkpoint_state(model, optimizer, args, epoch, best_map, best_top_1, cur_patience):
+	return {
+		"model": model.state_dict(),
+		"optimizer": optimizer.state_dict(),
+		"args": vars(args),
+		"epoch": epoch,
+		"best_map": best_map,
+		"best_top_1": best_top_1,
+		"cur_patience": cur_patience,
+	}
+
+
+def load_resume_checkpoint(args, model, optimizer, device):
+	if not args.resume:
+		return 0, 0.0, -1.0, 0
+	resume_path = last_checkpoint_path(args) if args.resume == "auto" else args.resume
+	state = load_torch_checkpoint(resume_path, device)
+	model_state = state["model"] if isinstance(state, dict) and "model" in state else state
+	missing, unexpected = model.load_state_dict(model_state, strict=False)
+	if missing or unexpected:
+		print("resume loaded with missing keys: %d | unexpected keys: %d" % (len(missing), len(unexpected)))
+	if isinstance(state, dict) and "optimizer" in state:
+		try:
+			optimizer.load_state_dict(state["optimizer"])
+		except ValueError as exc:
+			print("warning: optimizer state not restored:", exc)
+	start_epoch = int(state.get("epoch", -1)) + 1 if isinstance(state, dict) else 0
+	best_map = float(state.get("best_map", 0.0)) if isinstance(state, dict) else 0.0
+	best_top_1 = float(state.get("best_top_1", -1.0)) if isinstance(state, dict) else -1.0
+	cur_patience = int(state.get("cur_patience", 0)) if isinstance(state, dict) else 0
+	print("resumed:", resume_path, "| start epoch:", start_epoch)
+	return start_epoch, best_map, best_top_1, cur_patience
+
+
 def main():
 	args = apply_dataset_defaults(parse_args())
 	if args.dataset != "CASIA_B" and args.length not in ["4", "6", "8", "10"]:
 		raise ValueError("length must be one of 4, 6, 8, 10 for non-CASIA_B datasets.")
 	os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 	device = torch.device(args.device or ("cuda:0" if torch.cuda.is_available() else "cpu"))
+	set_random_seed(args.seed, args.deterministic == "1")
 	nb_nodes = nb_nodes_for(args.dataset)
 
 	data_tuple = load_initial_data(args, nb_nodes)
@@ -386,15 +514,18 @@ def main():
 	).to(device)
 	optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 	path = checkpoint_path(args)
+	last_path = last_checkpoint_path(args)
 
 	print("----- PyTorch MoCos hyperparams -----")
 	print("dataset: %s | probe: %s | length: %s | classes: %d" % (args.dataset, args.probe, args.length, nb_classes))
 	print("H: %d | heads: %d | layers: %d | device: %s" % (args.H, args.n_heads, args.L_transformer, device))
 	print("p_s: %.3f | p_t: %.3f | lambda: %.3f" % (args.prob_s, args.prob_t, args.fusion_lambda))
+	if args.seed is not None:
+		print("seed: %d | deterministic: %s" % (args.seed, args.deterministic))
 
 	if args.mode == "Eval":
-		state = torch.load(path, map_location=device)
-		model.load_state_dict(state["model"])
+		state = load_torch_checkpoint(path, device)
+		model.load_state_dict(state["model"], strict=False)
 		gallery_tuple = load_gallery_data(args, nb_nodes)
 		_, _, _, _, _, _, X_gal_J, _, _, _, _, y_gal, *_ = gallery_tuple
 		gal_f, gal_l = extract_features(model, X_gal_J, onehot_to_index(y_gal), pos_enc, args.batch_size, device)
@@ -411,31 +542,11 @@ def main():
 	train_labels_idx = onehot_to_index(y_train)
 	gallery_labels_idx = onehot_to_index(y_gal)
 	probe_labels_idx = onehot_to_index(y_test)
-	best_top_1 = 0.0
-	best_map = 0.0
-	cur_patience = 0
+	start_epoch, best_map, best_top_1, cur_patience = load_resume_checkpoint(args, model, optimizer, device)
 
-	for epoch in range(args.epochs):
+	for epoch in range(start_epoch, args.epochs):
 		train_features, train_labels_seen = extract_features(model, X_train_J, train_labels_idx, pos_enc, args.batch_size, device)
 		prototypes = generate_class_prototypes(train_labels_seen, train_features, nb_classes, device)
-
-		gal_f, gal_l = extract_features(model, X_gal_J, gallery_labels_idx, pos_enc, args.batch_size, device)
-		pro_f, pro_l = extract_features(model, X_test_J, probe_labels_idx, pos_enc, args.batch_size, device)
-		m_ap, top_1, top_5, top_10 = evaluate_features(gal_f, gal_l, pro_f, pro_l, args.probe_type)
-		print("[Epoch %d] mAP: %.4f | R1: %.4f | R5: %.4f | R10: %.4f" % (epoch, m_ap, top_1, top_5, top_10))
-
-		if epoch > 0 and top_1 > best_top_1:
-			best_top_1 = top_1
-			best_map = m_ap
-			cur_patience = 0
-			if args.save_model == "1":
-				os.makedirs(os.path.dirname(path), exist_ok=True)
-				torch.save({"model": model.state_dict(), "args": vars(args)}, path)
-				print("saved:", path)
-		else:
-			cur_patience += 1
-		if cur_patience >= args.patience:
-			break
 
 		model.train()
 		losses = []
@@ -470,7 +581,31 @@ def main():
 					"[%d] Batch %d | CSP %.5f | SSk %.5f | STr %.5f"
 					% (epoch, start // args.batch_size, float(loss), float(ssk_loss), float(str_loss))
 				)
-		print("[Epoch %d] loss: %.5f | best mAP/R1: %.4f/%.4f" % (epoch, np.mean(losses), best_map, best_top_1))
+		gal_f, gal_l = extract_features(model, X_gal_J, gallery_labels_idx, pos_enc, args.batch_size, device)
+		pro_f, pro_l = extract_features(model, X_test_J, probe_labels_idx, pos_enc, args.batch_size, device)
+		m_ap, top_1, top_5, top_10 = evaluate_features(gal_f, gal_l, pro_f, pro_l, args.probe_type)
+
+		if top_1 > best_top_1:
+			best_top_1 = top_1
+			best_map = m_ap
+			cur_patience = 0
+			if args.save_model == "1":
+				os.makedirs(os.path.dirname(path), exist_ok=True)
+				torch.save(checkpoint_state(model, optimizer, args, epoch, best_map, best_top_1, cur_patience), path)
+				print("saved:", path)
+		else:
+			cur_patience += 1
+
+		if args.save_model == "1":
+			os.makedirs(os.path.dirname(last_path), exist_ok=True)
+			torch.save(checkpoint_state(model, optimizer, args, epoch, best_map, best_top_1, cur_patience), last_path)
+
+		print(
+			"[Epoch %d] loss: %.5f | mAP: %.4f | R1: %.4f | R5: %.4f | R10: %.4f | best mAP/R1: %.4f/%.4f | patience: %d/%d"
+			% (epoch, np.mean(losses), m_ap, top_1, top_5, top_10, best_map, best_top_1, cur_patience, args.patience)
+		)
+		if cur_patience >= args.patience:
+			break
 
 
 if __name__ == "__main__":
