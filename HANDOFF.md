@@ -117,6 +117,22 @@ The following fixes have been applied to `MoCos_torch.py`:
    Early stopping still uses `--patience`, but it will not stop before
    `epoch + 1 >= min_epochs`.
 
+11. PyTorch initialization and BatchNorm were moved closer to TensorFlow 1.x.
+
+   The original graph uses TensorFlow dense defaults for most dense layers,
+   `tf.random_normal(std=1)` for MGT Q/K/V and CSP projection matrices, and
+   `tf.layers.batch_normalization` defaults (`epsilon=0.001`, `momentum=0.99`).
+   The PyTorch model now uses:
+
+   ```text
+   Xavier uniform for regular Linear layers
+   Normal(0, 1) for MGT Q/K/V and SSk-CSP projections
+   BatchNorm1d eps=1e-3, momentum=0.01
+   ```
+
+   Note: PyTorch BN momentum is the update weight, so `0.01` corresponds to
+   TensorFlow's decay-style `momentum=0.99`.
+
 ## Verification Already Run
 
 From `D:\Study\project\ReID\MoCos-torch`:

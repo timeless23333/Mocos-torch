@@ -213,6 +213,18 @@ def build_motif_adjs(dataset, adj_joint):
 	return np.stack([adj1, adj2, adj3, adj4, adj5], axis=0).astype(np.float32)
 
 
+def init_linear_xavier(module):
+	nn.init.xavier_uniform_(module.weight)
+	if module.bias is not None:
+		nn.init.zeros_(module.bias)
+
+
+def init_linear_normal(module, std=1.0):
+	nn.init.normal_(module.weight, mean=0.0, std=std)
+	if module.bias is not None:
+		nn.init.zeros_(module.bias)
+
+
 class MGTLayer(nn.Module):
 	def __init__(self, hidden_size, num_heads, motif_adjs):
 		super().__init__()
@@ -225,6 +237,11 @@ class MGTLayer(nn.Module):
 		self.k_layers = nn.ModuleList([nn.Linear(hidden_size, self.head_dim, bias=False) for _ in range(num_heads)])
 		self.v_layers = nn.ModuleList([nn.Linear(hidden_size, self.head_dim, bias=False) for _ in range(num_heads)])
 		self.register_buffer("motif_adjs", torch.from_numpy(motif_adjs), persistent=False)
+		self.reset_parameters()
+
+	def reset_parameters(self):
+		for layer in list(self.q_layers) + list(self.k_layers) + list(self.v_layers):
+			init_linear_normal(layer)
 
 	def forward(self, x):
 		heads = []
@@ -254,16 +271,32 @@ class MoCosTorch(nn.Module):
 		self.layers = nn.ModuleList([MGTLayer(hidden_size, num_heads, motif_adjs) for _ in range(num_layers)])
 		self.dropout1 = nn.Dropout(0.5)
 		self.out_proj = nn.Linear(hidden_size, hidden_size)
-		self.norm1 = nn.BatchNorm1d(hidden_size)
+		self.norm1 = nn.BatchNorm1d(hidden_size, eps=1e-3, momentum=0.01)
 		self.ffn = nn.Sequential(
 			nn.Linear(hidden_size, hidden_size * 2),
 			nn.ReLU(inplace=True),
 			nn.Dropout(0.5),
 			nn.Linear(hidden_size * 2, hidden_size),
 		)
-		self.norm2 = nn.BatchNorm1d(hidden_size)
+		self.norm2 = nn.BatchNorm1d(hidden_size, eps=1e-3, momentum=0.01)
 		self.ssk_proj_all = nn.Linear(hidden_size, hidden_size, bias=False)
 		self.ssk_proj_proto = nn.Linear(hidden_size, hidden_size, bias=False)
+		self.reset_parameters()
+
+	def reset_parameters(self):
+		for module in self.input_proj:
+			if isinstance(module, nn.Linear):
+				init_linear_xavier(module)
+		init_linear_xavier(self.pos_proj)
+		init_linear_xavier(self.out_proj)
+		for module in self.ffn:
+			if isinstance(module, nn.Linear):
+				init_linear_xavier(module)
+		init_linear_normal(self.ssk_proj_all)
+		init_linear_normal(self.ssk_proj_proto)
+		for norm in [self.norm1, self.norm2]:
+			nn.init.ones_(norm.weight)
+			nn.init.zeros_(norm.bias)
 
 	def _bn4d(self, norm, x):
 		shape = x.shape
