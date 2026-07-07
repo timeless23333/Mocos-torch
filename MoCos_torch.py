@@ -28,6 +28,7 @@ def parse_args():
 	parser.add_argument("--save_model", default="0")
 	parser.add_argument("--batch_size", default=256, type=int)
 	parser.add_argument("--epochs", default=15000, type=int)
+	parser.add_argument("--min_epochs", default=0, type=int, help="Do not early-stop before this many epochs.")
 	parser.add_argument("--H", default=128, type=int)
 	parser.add_argument("--n_heads", default=8, type=int)
 	parser.add_argument("--L_transformer", default=2, type=int)
@@ -308,11 +309,12 @@ def extract_features(model, data, labels, pos_enc, batch_size, device):
 	model.eval()
 	features = []
 	label_rows = []
-	for start in range(0, len(data) - batch_size + 1, batch_size):
-		x = torch.from_numpy(data[start:start + batch_size]).float().to(device)
+	for start in range(0, len(data), batch_size):
+		end = min(start + batch_size, len(data))
+		x = torch.from_numpy(data[start:end]).float().to(device)
 		seq_ftr, _, _ = model(x, pos_enc)
 		features.append(seq_ftr.cpu())
-		label_rows.extend(labels[start:start + batch_size].tolist())
+		label_rows.extend(labels[start:end].tolist())
 	if not features:
 		return torch.empty(0, device="cpu"), np.empty((0,))
 	return torch.cat(features, dim=0), np.asarray(label_rows)
@@ -550,9 +552,10 @@ def main():
 
 		model.train()
 		losses = []
-		for start in range(0, len(X_train_J) - args.batch_size + 1, args.batch_size):
-			x = torch.from_numpy(X_train_J[start:start + args.batch_size]).float().to(device)
-			labels = torch.from_numpy(train_labels_idx[start:start + args.batch_size]).long().to(device)
+		for start in range(0, len(X_train_J), args.batch_size):
+			end = min(start + args.batch_size, len(X_train_J))
+			x = torch.from_numpy(X_train_J[start:end]).float().to(device)
+			labels = torch.from_numpy(train_labels_idx[start:end]).long().to(device)
 			seq_mask = random_mask(int(args.length), args.prob_t, device)
 			node_mask = random_mask(joint_num, args.prob_s, device)
 			current_pos = pos_enc
@@ -604,7 +607,7 @@ def main():
 			"[Epoch %d] loss: %.5f | mAP: %.4f | R1: %.4f | R5: %.4f | R10: %.4f | best mAP/R1: %.4f/%.4f | patience: %d/%d"
 			% (epoch, np.mean(losses), m_ap, top_1, top_5, top_10, best_map, best_top_1, cur_patience, args.patience)
 		)
-		if cur_patience >= args.patience:
+		if cur_patience >= args.patience and (epoch + 1) >= args.min_epochs:
 			break
 
 

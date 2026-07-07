@@ -106,6 +106,17 @@ The following fixes have been applied to `MoCos_torch.py`:
 
    Or pass a concrete `.pt` path to `--resume`.
 
+9. Feature extraction now processes the final partial batch.
+
+   Earlier PyTorch code used `range(0, len(data) - batch_size + 1, batch_size)`,
+   which dropped any tail samples during prototype extraction and evaluation.
+   Training batches now also include the final partial batch.
+
+10. `--min_epochs` was added.
+
+   Early stopping still uses `--patience`, but it will not stop before
+   `epoch + 1 >= min_epochs`.
+
 ## Verification Already Run
 
 From `D:\Study\project\ReID\MoCos-torch`:
@@ -136,7 +147,7 @@ python MoCos_torch.py --dataset BIWI --probe Walking --length 6 --epochs 800 --p
 Longer BIWI Walking run:
 
 ```bash
-python MoCos_torch.py --dataset BIWI --probe Walking --length 6 --epochs 1500 --patience 250 --save_model 1 --gpu 0
+python MoCos_torch.py --dataset BIWI --probe Walking --length 6 --epochs 1500 --min_epochs 300 --patience 250 --save_model 1 --gpu 0
 ```
 
 Evaluation:

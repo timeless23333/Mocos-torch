@@ -125,7 +125,8 @@ python MoCos_torch.py --dataset CASIA_B --probe_type nm.nm --length 40 --epochs 
 ```
 
 `--epochs` is a maximum epoch count. Training stops earlier when Rank-1 does not
-improve for `--patience` epochs.
+improve for `--patience` epochs. Use `--min_epochs` to force training to run for
+at least a given number of epochs before early stopping is allowed.
 
 You can interrupt training with `Ctrl+C`. The current script saves only the best
 model when `--save_model 1` is enabled and Rank-1 improves. It also writes a
@@ -198,6 +199,7 @@ Common arguments:
 --length           sequence length
 --batch_size       batch size, default 256
 --epochs           maximum training epochs
+--min_epochs       minimum epochs before early stopping can trigger
 --patience         early stopping patience
 --save_model       set to 1 to save the best PyTorch checkpoint
 --device           cpu, cuda:0, cuda:1, etc.
