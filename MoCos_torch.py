@@ -16,7 +16,7 @@ from utils import process_SG as process
 
 def parse_args():
 	parser = argparse.ArgumentParser(description="PyTorch implementation of MoCos without TensorFlow.")
-	parser.add_argument("--dataset", default="KS20", choices=["IAS", "KGBD", "KS20", "BIWI", "CASIA_B"])
+	parser.add_argument("--dataset", default="KS20", choices=["IAS", "KGBD", "KS20", "BIWI", "CASIA_B", "MYDATA", "MYDATA_BIWI", "MYDATA_BIWI_TRAIN"])
 	parser.add_argument("--length", default="6")
 	parser.add_argument("--lr", default=0.00035, type=float)
 	parser.add_argument("--probe", default="probe")
@@ -82,7 +82,7 @@ def apply_dataset_defaults(args):
 				args.prob_t = 0.25
 			if args.fusion_lambda is None:
 				args.fusion_lambda = 0.75
-	elif args.dataset == "BIWI":
+	elif args.dataset in ["BIWI", "MYDATA", "MYDATA_BIWI", "MYDATA_BIWI_TRAIN"]:
 		if args.probe in ["Walking", "Still"]:
 			if args.prob_s is None:
 				args.prob_s = 0.25
@@ -411,7 +411,7 @@ def load_initial_data(args, nb_nodes):
 def load_gallery_data(args, nb_nodes):
 	if args.dataset in ["KGBD", "KS20"]:
 		return load_split(args, "gallery", args.batch_size, nb_nodes)
-	if args.dataset == "BIWI":
+	if args.dataset in ["BIWI", "MYDATA", "MYDATA_BIWI", "MYDATA_BIWI_TRAIN"]:
 		return load_split(args, "Still" if args.probe == "Walking" else "Walking", args.batch_size, nb_nodes)
 	if args.dataset == "IAS":
 		return load_split(args, "B" if args.probe == "A" else "A", args.batch_size, nb_nodes)

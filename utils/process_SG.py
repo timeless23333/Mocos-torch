@@ -3,6 +3,7 @@ import pickle as pkl
 import networkx as nx
 import scipy.sparse as sp
 import copy
+from pathlib import Path
 try:
 	from scipy.sparse.linalg import eigsh
 except ImportError:
@@ -20,22 +21,40 @@ import torch.nn as nn
 
 
 def gen_train_data(dataset, split, time_step, nb_nodes, nhood, global_att, batch_size, view='', reverse='0', D=False, graph=False, norm=True, L3=True, enc_k=10):
+	def npy_file(directory, exact_name, fallback_pattern):
+		directory = Path(directory)
+		exact_path = directory / exact_name
+		if exact_path.exists():
+			return exact_path
+		matches = sorted(directory.glob(fallback_pattern))
+		if len(matches) == 1:
+			return matches[0]
+		if not matches:
+			raise FileNotFoundError(str(exact_path))
+		raise FileNotFoundError("Multiple fallback files match %s in %s: %s" % (fallback_pattern, directory, matches))
+
 	def get_data(dimension, fr):
 		if reverse == '1':
 			used_data = 'target'
 		else:
 			used_data = 'source'
-		input_data = np.load(
-			'Datasets/' + frames_ps + 'train_npy_data/' + used_data + '_' + dimension + '_' + dataset + '_' + str(
-				fr) + '.npy', allow_pickle=True)
+		train_dir = 'Datasets/' + frames_ps + 'train_npy_data'
+		input_data = np.load(npy_file(
+			train_dir,
+			used_data + '_' + dimension + '_' + dataset + '_' + str(fr) + '.npy',
+			used_data + '_' + dimension + '_*_' + str(fr) + '.npy',
+		), allow_pickle=True)
 		input_data = input_data.reshape([-1, time_step, nb_nodes])
 		spine_pos = input_data[:, :, 0]
 		spine_pos = np.expand_dims(spine_pos, -1)
 		input_data = input_data - spine_pos
 		# if dataset == 'IAS' or dataset == 'BIWI' or dataset == 'KGBD':
-		t_input_data = np.load(
-			'Datasets/' + frames_ps + 'test_npy_data/' + split + '/t_' + used_data + '_' + dimension + '_' + dataset + '_' + str(
-				fr) + '.npy', allow_pickle=True)
+		test_dir = 'Datasets/' + frames_ps + 'test_npy_data/' + split
+		t_input_data = np.load(npy_file(
+			test_dir,
+			't_' + used_data + '_' + dimension + '_' + dataset + '_' + str(fr) + '.npy',
+			't_' + used_data + '_' + dimension + '_*_' + str(fr) + '.npy',
+		), allow_pickle=True)
 		# else:
 		# 	t_input_data = np.load(
 		# 		'Datasets/' + frames_ps + 'test_npy_data/t_' + used_data + '_' + dimension + '_' + dataset + '_' + str(
@@ -149,22 +168,36 @@ def gen_train_data(dataset, split, time_step, nb_nodes, nhood, global_att, batch
 	X_train_d_all = np.reshape(np.array(X_train_d_all), [X_train.shape[0], time_step, -1])
 	X_test_d_all = np.reshape(np.array(X_test_d_all), [X_test.shape[0], time_step, -1])
 
-	ids = np.load(
-		'Datasets/' + frames_ps + 'train_npy_data/ids_' + dataset + '_' + str(time_step) + '.npy', allow_pickle=True)
+	train_dir = 'Datasets/' + frames_ps + 'train_npy_data'
+	test_dir = 'Datasets/' + frames_ps + 'test_npy_data/' + split
+	ids = np.load(npy_file(
+		train_dir,
+		'ids_' + dataset + '_' + str(time_step) + '.npy',
+		'ids_*_' + str(time_step) + '.npy',
+	), allow_pickle=True)
 	ids = ids.item()
 	# if dataset == 'IAS' or dataset == 'BIWI' or dataset == 'KGBD':
-	t_ids = np.load(
-		'Datasets/' + frames_ps + 'test_npy_data/' + split + '/ids_' + dataset + '_' + str(time_step) + '.npy', allow_pickle=True)
+	t_ids = np.load(npy_file(
+		test_dir,
+		'ids_' + dataset + '_' + str(time_step) + '.npy',
+		'ids_*_' + str(time_step) + '.npy',
+	), allow_pickle=True)
 	# else:
 	# 	t_ids = np.load(
 	# 		'Datasets/' + frames_ps + 'test_npy_data/ids_' + dataset + '_' + str(time_step) + '.npy')
 	t_ids = t_ids.item()
 
-	y_train = np.load(
-		'Datasets/' + frames_ps + 'train_npy_data/frame_id_' + dataset + '_' + str(time_step) + '.npy', allow_pickle=True)
+	y_train = np.load(npy_file(
+		train_dir,
+		'frame_id_' + dataset + '_' + str(time_step) + '.npy',
+		'frame_id_*_' + str(time_step) + '.npy',
+	), allow_pickle=True)
 	# if dataset == 'IAS' or dataset == 'BIWI' or dataset == 'KGBD':
-	y_test = np.load(
-		'Datasets/' + frames_ps + 'test_npy_data/' + split + '/frame_id_' + dataset + '_' + str(time_step) + '.npy', allow_pickle=True)
+	y_test = np.load(npy_file(
+		test_dir,
+		'frame_id_' + dataset + '_' + str(time_step) + '.npy',
+		'frame_id_*_' + str(time_step) + '.npy',
+	), allow_pickle=True)
 	# else:
 	# 	y_test = np.load(
 	# 		'Datasets/' + frames_ps + 'test_npy_data/frame_id_' + dataset + '_' + str(time_step) + '.npy')
@@ -402,6 +435,8 @@ def gen_train_data(dataset, split, time_step, nb_nodes, nhood, global_att, batch
 		nb_classes = 124
 	elif dataset == 'KinectREID':
 		nb_classes = 71
+	else:
+		nb_classes = len(ids.keys())
 
 	adj_joint = adj_joint[np.newaxis]
 	biases_joint = adj_to_bias(adj_joint, [nb_nodes], nhood=nhood)
