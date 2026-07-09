@@ -90,6 +90,34 @@ python Data-process.py 6
 
 The original README explains the required raw dataset folders in more detail.
 
+### Custom MediaPipe JSON Data
+
+For JSON files named like `p001_left_01.json`, `p001_left_02.json`, etc., the
+suffix is treated as an independent recording/take. A stricter split keeps
+different takes out of each other:
+
+```bash
+python tools/mediapipe_json_to_mocos.py --input-root Datasets/raw_json --output-root Datasets/MYDATA_BIWI_TRAIN/6 --dataset-name BIWI --length 6 --stride 3 --train-views left,right,front --train-takes 1,2,3 --gallery-view left --gallery-takes 4 --probe-views back --probe-takes 5 --force
+```
+
+This means:
+
+```text
+train:   left/right/front, takes 01/02/03
+gallery: left, take 04
+probe:   back, take 05
+```
+
+Train and evaluate the converted dataset:
+
+```bash
+python MoCos_torch.py --dataset MYDATA_BIWI_TRAIN --probe Walking --length 6 --epochs 500 --min_epochs 80 --patience 120 --save_model 1 --mode Train --gpu 0 --seed 1
+python MoCos_torch.py --dataset MYDATA_BIWI_TRAIN --probe Walking --length 6 --mode Eval --gpu 0
+```
+
+For a high-score sanity check only, you can include the probe view/take in
+training, but that is not a strict generalization test.
+
 ## Quick Smoke Test
 
 Once data exists, run a short training job to confirm the full pipeline works:

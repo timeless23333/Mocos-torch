@@ -100,6 +100,22 @@ def parse_view(path):
     raise ValueError(f"Cannot parse view from {path}")
 
 
+def parse_take(path):
+    match = re.search(r"_(\d+)$", path.stem)
+    if not match:
+        match = re.search(r"take[_-]?(\d+)", path.stem, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def parse_csv_set(value, caster=str):
+    if value is None:
+        return None
+    parsed = {caster(v.strip()) for v in value.split(",") if v.strip()}
+    return parsed or None
+
+
 def load_sequence(path, landmark_key, min_visibility):
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
@@ -176,6 +192,9 @@ def main():
     parser.add_argument("--gallery-view", default="left")
     parser.add_argument("--probe-views", default="right,front,back")
     parser.add_argument("--train-views", default=None)
+    parser.add_argument("--train-takes", default=None)
+    parser.add_argument("--gallery-takes", default=None)
+    parser.add_argument("--probe-takes", default=None)
     parser.add_argument("--gallery-split", default="Still")
     parser.add_argument("--probe-split", default="Walking")
     parser.add_argument("--landmark-key", default="landmarks_3d_world")
@@ -190,10 +209,11 @@ def main():
             raise FileExistsError(f"{output_root} exists; pass --force to replace it")
         shutil.rmtree(output_root)
 
-    probe_views = {v.strip().lower() for v in args.probe_views.split(",") if v.strip()}
-    train_views = None
-    if args.train_views:
-        train_views = {v.strip().lower() for v in args.train_views.split(",") if v.strip()}
+    probe_views = parse_csv_set(args.probe_views.lower())
+    train_views = parse_csv_set(args.train_views.lower()) if args.train_views else None
+    train_takes = parse_csv_set(args.train_takes, int)
+    gallery_takes = parse_csv_set(args.gallery_takes, int)
+    probe_takes = parse_csv_set(args.probe_takes, int)
     gallery_items = []
     probe_items = []
     train_items = []
@@ -201,17 +221,19 @@ def main():
     for path in sorted(input_root.rglob("*.json")):
         person_id = parse_person_id(path)
         view = parse_view(path)
+        take = parse_take(path)
         seq = load_sequence(path, args.landmark_key, args.min_visibility)
-        print(f"{path}: person={person_id} view={view} valid_frames={seq.shape[0]}")
-        if train_views is not None and view in train_views:
-            train_items.append((person_id, seq))
-        if view == args.gallery_view.lower():
-            gallery_items.append((person_id, seq))
-        elif view in probe_views:
-            probe_items.append((person_id, seq))
+        print(f"{path}: person={person_id} view={view} take={take} valid_frames={seq.shape[0]}")
 
-    if train_views is None:
-        train_items = gallery_items
+        train_view_match = view in train_views if train_views is not None else view == args.gallery_view.lower()
+        if train_view_match and (train_takes is None or take in train_takes):
+            train_items.append((person_id, seq))
+
+        if view == args.gallery_view.lower() and (gallery_takes is None or take in gallery_takes):
+            gallery_items.append((person_id, seq))
+
+        if view in probe_views and (probe_takes is None or take in probe_takes):
+            probe_items.append((person_id, seq))
 
     train_clips, train_labels, train_ids = clips_from_sequences(train_items, args.length, args.stride)
     gallery_clips, gallery_labels, gallery_ids = clips_from_sequences(gallery_items, args.length, args.stride)

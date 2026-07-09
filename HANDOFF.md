@@ -175,6 +175,56 @@ Quick startup check:
 python MoCos_torch.py --help
 ```
 
+## Custom MediaPipe JSON Data
+
+Current local `Datasets/raw_json` contains 100 JSON files:
+
+```text
+5 persons x 4 views x 5 takes
+p001_back_01.json ... p005_right_05.json
+```
+
+The conversion utility supports take/session filtering:
+
+```text
+--train-takes
+--gallery-takes
+--probe-takes
+```
+
+Recommended stricter split for custom data:
+
+```bash
+python tools/mediapipe_json_to_mocos.py --input-root Datasets/raw_json --output-root Datasets/MYDATA_BIWI_TRAIN/6 --dataset-name BIWI --length 6 --stride 3 --train-views left,right,front --train-takes 1,2,3 --gallery-view left --gallery-takes 4 --probe-views back --probe-takes 5 --force
+```
+
+This uses:
+
+```text
+train:   left/right/front, takes 01/02/03
+gallery: left, take 04
+probe:   back, take 05
+```
+
+With the current 5-person data, that source-video split is:
+
+```text
+train:   45 JSON files
+gallery: 5 JSON files
+probe:   5 JSON files
+```
+
+Train/evaluate:
+
+```bash
+python MoCos_torch.py --dataset MYDATA_BIWI_TRAIN --probe Walking --length 6 --epochs 500 --min_epochs 80 --patience 120 --save_model 1 --mode Train --gpu 0 --seed 1
+python MoCos_torch.py --dataset MYDATA_BIWI_TRAIN --probe Walking --length 6 --mode Eval --gpu 0
+```
+
+High scores from splits such as `train=left,right,front,back` with
+`probe=back` are only sanity checks, because the probe view is present in
+training. They are not strict unseen-view generalization results.
+
 ## Current Known Issue
 
 The PyTorch implementation is a functional migration, not a strict variable-level
